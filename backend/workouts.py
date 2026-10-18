@@ -39,6 +39,8 @@ NOUN = {"run": "run", "bike": "ride"}
 
 
 def _step(kind, label, s, intensity, target=None, note=None):
+    if kind in ("warmup", "cooldown"):  # warming up and cooling down go by feel, never to a target
+        target = None
     return {"kind": kind, "label": label, "s": round(s), "intensity": intensity, "target": target, "note": note}
 
 
@@ -99,7 +101,7 @@ def _run_steps(kind, total, t):
     if kind in ("easy", "long"):
         return [_step("interval", f"{TITLES[kind]} run", total * 60, "easy", t.run("easy", 2))]
     if kind == "shakeout":
-        return [_step("warmup", "Warm-up", 600, "easy", t.run("easy", 2)),
+        return [_step("warmup", "Warm-up", 600, "easy"),
                 _repeat(4, _step("interval", "Stride", 20, "anaerobic", None, "Fast but relaxed"),
                         _step("recovery", "Easy", 100, "rest")),
                 _step("cooldown", "Cool-down", 300, "easy")]
@@ -115,7 +117,7 @@ def _run_steps(kind, total, t):
     else:  # anaerobic
         main = _repeat(8, _step("interval", "Fast", 45, "anaerobic", t.pace("anaerobic"), None if t.five else "Fast, near all-out"),
                        _step("recovery", "Walk or jog", 135, "rest"))
-    return [_step("warmup", "Warm-up", warm * 60, "easy", t.run("easy", 2)), main,
+    return [_step("warmup", "Warm-up", warm * 60, "easy"), main,
             _step("cooldown", "Cool-down", cool * 60, "easy")]
 
 
@@ -133,7 +135,7 @@ def _bike_steps(kind, total, t):
         main = _repeat(n, _step("interval", "Hard", 240, "high", t.bike("vo2")), _step("recovery", "Easy spin", 240, "rest"))
     else:  # anaerobic: heart rate and power lag behind 30 s sprints, so they go by feel
         main = _repeat(8, _step("interval", "Sprint", 30, "anaerobic", None, "All-out"), _step("recovery", "Easy spin", 150, "rest"))
-    return [_step("warmup", "Warm-up", warm * 60, "easy", t.bike("endurance")), main, _step("cooldown", "Cool-down", cool * 60, "easy")]
+    return [_step("warmup", "Warm-up", warm * 60, "easy"), main, _step("cooldown", "Cool-down", cool * 60, "easy")]
 
 
 def _flat(steps):

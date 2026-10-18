@@ -23,12 +23,12 @@ def ride(kind, total, t, week=0, tri=None):
         block = 30 if total >= 150 else 20
         n = _clamp((total - 40) // (block + 10), 1, 4)
         rest = max(10, total - 20 - n * (block + 10))
-        return RIDES["race_long"], [_step("warmup", "Endurance", 20 * 60, "easy", endurance),
+        return RIDES["race_long"], [_step("interval", "Endurance", 20 * 60, "easy", endurance),
                                     _repeat(n, _step("interval", "Race effort", block * 60, "high", t.bike(None, RACE_POWER[tri])),
                                             _step("recovery", "Endurance", 600, "easy", endurance)),
-                                    _step("cooldown", "Endurance", rest * 60, "easy", endurance)]
+                                    _step("interval", "Endurance", rest * 60, "easy", endurance)]
     if kind == "opener":
-        return RIDES["opener"], [_step("warmup", "Easy", 20 * 60, "easy", endurance),
+        return RIDES["opener"], [_step("warmup", "Easy", 20 * 60, "easy"),
                                  _repeat(3, _step("interval", "Hard", 60, "high", t.bike("vo2")), spin(120)),
                                  _step("cooldown", "Easy", 11 * 60, "easy")]
     warm, cool = 15, 10
@@ -42,7 +42,7 @@ def ride(kind, total, t, week=0, tri=None):
                        spin(rec * 60))
     else:  # VO2 max: 4 min hard, 4 easy
         work = _repeat(_clamp(main // 8, 3, 6), _step("interval", "Hard", 240, "high", t.bike("vo2")), spin(240))
-    return RIDES[kind], [_step("warmup", "Warm-up", warm * 60, "easy", endurance), work,
+    return RIDES[kind], [_step("warmup", "Warm-up", warm * 60, "easy"), work,
                          _step("cooldown", "Cool-down", cool * 60, "easy")]
 
 

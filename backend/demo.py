@@ -5,6 +5,8 @@ import random
 from datetime import date, datetime, timedelta
 
 import db
+import review
+import workouts
 
 # weekday -> (kind, km range, avg HR range, pace s/km range)
 PLAN = {
@@ -17,7 +19,7 @@ PLAN = {
     6: ("long", (16, 24), (145, 156), (320, 350)),
 }
 
-DEMO_VERSION = "2"  # bumped when the demo data changes, so an existing demo database is rebuilt the same day
+DEMO_VERSION = "4"  # bumped when the demo data changes, so an existing demo database is rebuilt the same day
 
 # Other sports, so every page has something: weekday -> (Garmin type, name, chance, km range, speed m/s range,
 # avg HR range, load per hour, training effect label)
@@ -139,6 +141,7 @@ def seed(db_path, days=420):
             "load_high_max": 1160, "load_anaerobic": 40, "load_anaerobic_min": 170, "load_anaerobic_max": 510,
             "load_focus": "ANAEROBIC_SHORTAGE",
         })
+    todays_run(conn, rng, today)
     # A GPS loop for the newest outdoor activity, so the last activity panel has a map when that's the newest
     last = conn.execute("SELECT id, distance_m FROM activities WHERE type IN ('running', 'road_biking', 'walking') "
                         "ORDER BY start_local DESC LIMIT 1").fetchone()
@@ -152,6 +155,36 @@ def seed(db_path, days=420):
     db.set_meta(conn, "training_profile", json.dumps({"lt_speed": 3.45, "lt_hr": 172, "zones": [98, 117, 137, 156, 175, 195]}))
     conn.commit()
     conn.close()
+
+
+def todays_run(conn, rng, today):
+    """This morning's threshold intervals, run from a workout sent to the watch from the dashboard (Garmin marks the
+    activity with the workout's id), with a lap per step: the Workout page shows it at the top, with its review."""
+    t = workouts.Targets({"lt_speed": 3.45, "zones": [98, 117, 137, 156, 175, 195]}, None)
+    steps = workouts._run_steps("threshold", 60, t)  # 4 × 8 min, the third a little slow
+    laps = []
+    for i, s in enumerate(workouts._flat(steps)):
+        target = s["target"]
+        pace = ((target["fast"] + target["slow"]) / 2 * (1.04 if i == 5 else rng.uniform(0.985, 1.0)) if target
+                else 345 if s["kind"] == "warmup" else 350 if s["kind"] == "cooldown" else 420)
+        hr = 168 + i if s["intensity"] == "high" else 142
+        laps.append({"km": round(s["s"] / pace, 3), "duration_s": s["s"], "speed": 1000 / pace, "avg_hr": hr,
+                     "max_hr": hr + 6})
+    now = datetime.now()
+    start = max(datetime.combine(today, datetime.min.time()), min(now - timedelta(minutes=90), now.replace(hour=6, minute=30)))
+    km, dur = sum(l["km"] for l in laps), sum(l["duration_s"] for l in laps)
+    run_id = int(today.strftime("%Y%m%d")) * 10 + 1
+    db.upsert_activity(conn, {
+        "id": run_id, "start_local": start.strftime("%Y-%m-%d %H:%M:%S"), "date": today.isoformat(), "type": "running",
+        "name": "Odense threshold", "distance_m": km * 1000, "duration_s": dur, "avg_hr": 158, "max_hr": 178,
+        "avg_speed": km * 1000 / dur, "elev_gain": 35, "training_load": 140, "aerobic_te": 3.8, "anaerobic_te": 1.2,
+        "te_label": "LACTATE_THRESHOLD", "raw": {"workoutId": 1},
+    })
+    db.set_laps(conn, run_id, laps)
+    db.set_efforts(conn, run_id, {400: 98.0, 1000: 262.0, 1609: 430.0, 5000: 1500.0})
+    w = {"sport": "run", "title": "Threshold intervals", "kind": "threshold", "steps": steps,
+         "total_s": sum(s["s"] for s in workouts._flat(steps)), "km": workouts.km_of(steps, t), "plan": False}
+    review.remember(conn, 1, w, today, ["Garmin load focus: high aerobic shortage", "Readiness 74"], today)
 
 
 def interval_laps(rng, kind, hr):

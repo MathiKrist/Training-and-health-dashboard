@@ -232,6 +232,24 @@ body {
 .wk-steps .reps .len { grid-column: 2; }
 .wk-steps .reps ol { grid-column: 2; list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.7rem; }
 
+/* Workout: the sport's newest activity at the top, its route beside it, and the review of a run under both */
+.wk-last { border-bottom: 1px solid var(--rule); }
+.wk-last > div:first-child { display: flex; flex-direction: column; gap: 1.25rem; }
+.wk-last .last-map { min-height: 240px; }
+@media (min-width: 1000px) {
+  .last.wk-last { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.25rem 3rem; }
+  .last.wk-last:has(> .last-map[hidden]) { grid-template-columns: minmax(0, 1fr); }
+}
+.wk-review-open { margin: 0; }
+.wk-review { grid-column: 1 / -1; display: grid; gap: 1rem; min-width: 0; }
+.wk-review p { margin: 0; }
+.wk-review-title, .wk-review-why, .wk-review .pending { color: var(--muted); font-size: 0.92rem; }
+.wk-review .error { color: var(--fatigue); }
+table.laps.review td.ok { color: var(--good); font-weight: 600; }
+table.laps.review td.off { color: var(--fatigue); font-weight: 600; white-space: nowrap; }
+.wk-review-note { display: grid; gap: 0.6rem; max-width: 72ch; }
+.wk-review-note .chat-usage { color: var(--muted); font-size: 0.75rem; }
+
 /* Race goal: what, when and how far off, with Garmin's prediction moving toward the target */
 .race { display: grid; gap: 1.25rem 3rem; padding: 1.75rem 0; border-bottom: 1px solid var(--rule); }
 @media (min-width: 1000px) { .race { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; } }

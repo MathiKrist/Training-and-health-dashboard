@@ -8,6 +8,7 @@ import config
 import db
 import changes as chat_changes
 import plans
+import review
 import workouts
 
 CTL_DAYS = 42  # fitness: long-term average load
@@ -221,6 +222,7 @@ ACTIVITY_SELECT = (
     "json_extract(raw, '$.activeSets') AS sets, json_extract(raw, '$.totalReps') AS reps, "
     "json_extract(raw, '$.locationName') AS location, json_extract(raw, '$.elevationLoss') AS elev_loss, "
     "json_extract(raw, '$.maxSpeed') AS max_speed, json_extract(raw, '$.elapsedDuration') AS elapsed_s, "
+    "json_extract(raw, '$.workoutId') AS workout_id, "
     + ", ".join(f"json_extract(raw, '$.fastestSplit_{m}') AS best_{m}" for m in BEST_EFFORTS)
 )
 
@@ -288,6 +290,7 @@ def build_activity(db_path, activity_id):
             "SELECT duration_s, avg_hr, training_load FROM activities WHERE training_load > 0 AND avg_hr > 0")]
         track = db.get_track(conn, activity_id)
         laps = db.get_laps(conn, activity_id)
+        efforts = db.get_efforts(conn, activity_id)
     finally:
         conn.close()
     a = dict(row)
@@ -303,8 +306,10 @@ def build_activity(db_path, activity_id):
         "stats": {k: v for k, v in stats.items() if v is not None},
         "hr_zones": hr_zones if any(hr_zones) else None,
         "power_zones": power_zones if any(power_zones) else None,
-        "best": [{"label": label, "m": m, "s": raw[f"fastestSplit_{m}"]}
-                 for m, label in BEST_EFFORTS.items() if raw.get(f"fastestSplit_{m}")],
+        # The run's own best efforts (400 m included), else Garmin's fastest splits until they're worked out
+        "best": [{"label": label, "m": m, "s": efforts[m]} for m, label in DISTANCES.items() if m in efforts] if efforts
+                else [{"label": label, "m": m, "s": raw[f"fastestSplit_{m}"]}
+                      for m, label in BEST_EFFORTS.items() if raw.get(f"fastestSplit_{m}")],
         "track": track or None,
         "laps": laps or [],
     }
@@ -316,6 +321,13 @@ def build_dashboard(db_path=None):
         acts = [dict(r) for r in conn.execute(
             f"SELECT {ACTIVITY_SELECT} FROM activities WHERE date IS NOT NULL AND date != '' ORDER BY start_local")]
         track = db.get_track(conn, acts[-1]["id"]) if acts else None
+        # The newest activity of each sport the Workout page has, with its route, for the top of that page
+        last_of = {}
+        for a in reversed(acts):
+            if sport_of(a["type"]) in workouts.ALL_SPORTS and sport_of(a["type"]) not in last_of:
+                last_of[sport_of(a["type"])] = a
+        last_tracks = {k: db.get_track(conn, a["id"]) for k, a in last_of.items()}
+        archive = review.load_archive(conn)
         efforts = db.all_efforts(conn)
         days = [dict(r) for r in conn.execute("SELECT * FROM daily ORDER BY date")]
         goal = db.get_meta(conn, "race_goal")
@@ -439,6 +451,14 @@ def build_dashboard(db_path=None):
             upcoming.append({"date": c["date"], "sport": c["sport"], "title": x["title"] if x else "Rest day",
                              "total_s": x["total_s"] if x else 0, "km": x["km"] if x else None})
 
+    # Whether each sport's newest activity was run from a workout the dashboard sent, so it can be reviewed
+    last_by_sport = {}
+    for k, a in last_of.items():
+        summary = next(x for x in recent_acts if x["id"] == a["id"])
+        last_by_sport[k] = {**summary, "track": last_tracks[k] or None,
+                            "review": review.planned({**summary, "workout_id": a["workout_id"]}, archive, sent, plan_sent,
+                                                     plan, workout_list) is not None}
+
     if race and plan and plan["projection"] and plan_cfg["goal"] == "race" and plan_cfg["date"] == race["date"]:
         race["plan"] = {k: plan["projection"][k] for k in ("low", "high")}
 
@@ -461,6 +481,7 @@ def build_dashboard(db_path=None):
         "activities": recent_acts,
         # The newest activity, with its GPS track when it has one (for the map at the top)
         "last_activity": {**recent_acts[0], "track": track or None} if acts else None,
+        "last_by_sport": last_by_sport,  # the newest run, ride and swim, for the top of the Workout page
         "activities_from": acts[0]["date"] if acts else None,  # the first synced activity, for "this year" totals
         # Names the page shows, from the tables above
         "sports": SPORT_LABELS,

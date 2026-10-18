@@ -112,6 +112,15 @@ class GarminFormat(unittest.TestCase):
         self.assertLess(hard["targetValueOne"], hard["targetValueTwo"])  # m/s, the slow end first
         self.assertEqual(g["estimatedDurationInSecs"], w["total_s"])
 
+    def test_warm_up_and_cool_down_go_by_feel(self):
+        w = recommend(focus="AEROBIC_HIGH_SHORTAGE")[0]
+        self.assertEqual([(s["kind"], s["target"]) for s in (w["steps"][0], w["steps"][-1])],
+                         [("warmup", None), ("cooldown", None)])
+        steps = workouts.to_garmin(w, TODAY)["workoutSegments"][0]["workoutSteps"]
+        self.assertEqual([s["targetType"]["workoutTargetTypeKey"] for s in (steps[0], steps[-1])], ["no.target", "no.target"])
+        # Whoever passes one (the chat's custom steps), a warm-up never gets a target
+        self.assertIsNone(workouts._step("warmup", "Warm-up", 600, "easy", {"type": "hr", "zone": 2})["target"])
+
 
 class OtherSports(unittest.TestCase):
     def test_swim_goes_by_distance_in_its_pool(self):
@@ -130,6 +139,14 @@ class OtherSports(unittest.TestCase):
         work = g["workoutSegments"][0]["workoutSteps"][1]["workoutSteps"][0]
         self.assertEqual((work["targetType"]["workoutTargetTypeKey"], work["targetValueOne"], work["targetValueTwo"]),
                          ("power.zone", 190.0, 210.0))
+
+
+    def test_rides_warm_up_by_feel_but_race_effort_endurance_keeps_power(self):
+        import multisport
+        t = workouts.Targets({**PROFILE, "ftp": 200}, None)
+        self.assertIsNone(workouts._bike_steps("threshold", 60, t)[0]["target"])
+        _, steps = multisport.ride("long", 180, t, tri="half")
+        self.assertEqual([s["target"]["type"] for s in (steps[0], steps[-1])], ["power", "power"])
 
 
 if __name__ == "__main__":

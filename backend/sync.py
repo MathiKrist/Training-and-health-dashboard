@@ -207,12 +207,12 @@ _shared_client = None  # logged in once and kept, for activities opened on the p
 
 
 def fetch_details(db_path, activity_id):
-    """Fetch an activity's GPS track and laps from Garmin if they aren't stored yet.
+    """Fetch an activity's GPS track and laps from Garmin if they aren't stored yet, and a run's best efforts.
     Returns None when all is well, or a message saying why they couldn't be fetched."""
     global _shared_client
     conn = db.connect(db_path)
     try:
-        row = conn.execute("SELECT json_extract(raw, '$.hasPolyline') AS gps FROM activities WHERE id = ?",
+        row = conn.execute("SELECT json_extract(raw, '$.hasPolyline') AS gps, type FROM activities WHERE id = ?",
                            (activity_id,)).fetchone()
         if not row:
             return None
@@ -220,7 +220,9 @@ def fetch_details(db_path, activity_id):
         laps = db.get_laps(conn, activity_id)
         # Laps stored before max speed and descent were added are fetched again to get them
         need_laps = laps is None or (laps and "max_speed" not in laps[0])
-        if not (need_track or need_laps):
+        # A run synced since the last batch of best efforts gets them now, so its 400 m shows straight away
+        need_efforts = "running" in (row["type"] or "") and db.get_efforts(conn, activity_id) is None
+        if not (need_track or need_laps or need_efforts):
             return None
         _shared_client = _shared_client or _client()
         if need_track:
@@ -231,6 +233,10 @@ def fetch_details(db_path, activity_id):
             laps = fetch_laps(_shared_client, activity_id)
             if laps is not None:
                 db.set_laps(conn, activity_id, laps)
+        if need_efforts:
+            bests = fetch_efforts(_shared_client, activity_id)
+            if bests is not None:
+                db.set_efforts(conn, activity_id, bests)
         conn.commit()
         return None
     except Exception as e:

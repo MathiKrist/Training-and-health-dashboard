@@ -8,7 +8,7 @@ import { renderHealth } from "./health.js";
 import { renderOverview, lastMap } from "./overview.js";
 import { renderActivities } from "./activities.js";
 import { renderSport } from "./sport.js";
-import { renderWorkout } from "./workout.js";
+import { renderWorkout, lastWorkoutMap } from "./workout.js";
 import { renderPlan } from "./plan.js";
 import "./chat.js";
 import { redrawModalMap } from "./modal.js";
@@ -94,6 +94,7 @@ export function showPage() {
     if (a.dataset.page === r.id) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
   if (r.page !== "overview") lastMap.stop();
+  if (r.page !== "workout") lastWorkoutMap.stop();
   if (r.page === "sport") renderSport(r.key); else PAGES[r.page]();
   const title = r.page === "sport" ? sportLabel(r.key) : $(`page-${r.page}`).dataset.title;
   document.title = r.page === "overview" ? "Training" : `${title} · Training`;

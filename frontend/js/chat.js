@@ -5,7 +5,7 @@ import { $, escapeHtml } from "./util.js";
 
 let log = [], busy = false;
 
-const paragraphs = (text) => text.split(/\n{2,}/).map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br>")}</p>`).join("");
+export const paragraphs = (text) => text.split(/\n{2,}/).map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br>")}</p>`).join("");
 const dollars = (c) => `$${c < 0.01 ? c.toFixed(4) : c.toFixed(2)}`;
 const tokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
 const MODEL_NAME = { "claude-haiku-5-5": "Haiku", "claude-sonnet-5-5": "Sonnet" };
@@ -18,7 +18,7 @@ function item(m) {
 }
 
 // A reply's tokens and price: what the API charged, or with Claude Code what they'd cost on the API
-function usage(u) {
+export function usage(u) {
   if (!u) return "";
   const price = u.cost != null ? dollars(u.cost) : `on the API ≈ ${dollars(u.haiku)} Haiku, ${dollars(u.sonnet)} Sonnet`;
   return `<p class="chat-usage">${tokens(u.tokens)} tokens · ${price}</p>`;

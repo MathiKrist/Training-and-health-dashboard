@@ -61,6 +61,21 @@
         <h1>Workout</h1>
         <div class="range-switch" id="workoutSport" role="group" aria-label="Sport"></div>
       </header>
+      <!-- The sport's newest activity, when it's from today or the last 12 hours; one run from a workout the
+           dashboard sent can be reviewed against it -->
+      <section class="last wk-last" id="wkLast" aria-labelledby="wkLastName" hidden>
+        <div>
+          <header class="last-open">
+            <p class="eyebrow"></p>
+            <h2><button type="button" class="last-open" id="wkLastName"></button></h2>
+            <p class="last-effect"></p>
+          </header>
+          <dl class="last-stats last-open"></dl>
+          <p class="wk-review-open"><button type="button" class="link-btn" id="wkReviewBtn" aria-expanded="false" aria-controls="wkReview" hidden></button></p>
+        </div>
+        <div class="last-map" id="wkLastMap" role="img" hidden></div>
+        <div class="wk-review" id="wkReview" aria-live="polite" hidden></div>
+      </section>
       <p class="plan-add"><button type="button" class="link-btn" id="planAdd" hidden>+ Training plan</button></p>
       <!-- The plan's line and the next 7 days; a day opens below -->
       <div id="planTop" hidden>

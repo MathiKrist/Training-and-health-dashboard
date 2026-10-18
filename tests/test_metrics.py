@@ -1,11 +1,13 @@
 """The dashboard's numbers. Run from the project folder: python -m unittest discover tests"""
 import sys
+import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 import config  # noqa: E402
+import db  # noqa: E402
 import metrics  # noqa: E402
 import sync  # noqa: E402
 
@@ -106,3 +108,31 @@ class Vo2max(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ActivityPopup(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.dir.name) / "test.db")
+        conn = db.connect(self.path)
+        row = sync.parse_activity({"activityId": 7, "startTimeLocal": "2026-10-13 07:30:00",
+                                   "activityType": {"typeKey": "running"}, "distance": 6000, "movingDuration": 1800,
+                                   "fastestSplit_1000": 330.0, "fastestSplit_1609": 552.0, "fastestSplit_5000": 1960.0})
+        db.upsert_activity(conn, row)
+        conn.commit()
+        conn.close()
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_best_efforts_from_garmin_until_worked_out(self):
+        best = metrics.build_activity(self.path, 7)["best"]
+        self.assertEqual([b["m"] for b in best], [1000, 1609, 5000])
+
+    def test_best_efforts_include_400m_once_worked_out(self):
+        conn = db.connect(self.path)
+        db.set_efforts(conn, 7, {"400": 128.1, "1000": 327.4, "1609": 550.1, "5000": 1959.7})
+        conn.commit()
+        conn.close()
+        best = metrics.build_activity(self.path, 7)["best"]
+        self.assertEqual([(b["label"], b["s"]) for b in best][:2], [("400 m", 128.1), ("1 km", 327.4)])

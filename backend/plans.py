@@ -291,7 +291,7 @@ class Paces(workouts.Targets):
 
 def _race_pace_steps(total, t):
     n = max(2, min(5, round((total - 25) / 12)))
-    return [_step("warmup", "Warm-up", 900, "easy", t.run("easy", 2)),
+    return [_step("warmup", "Warm-up", 900, "easy"),
             _repeat(n, _step("interval", "Race pace", 600, "high", t.race() or t.hr(4)),
                     _step("recovery", "Easy jog", 120, "rest")),
             _step("cooldown", "Cool-down", 600, "easy")]
@@ -300,7 +300,7 @@ def _race_pace_steps(total, t):
 def _touch_steps(t):
     """Race week: a little race pace to stay sharp, 15 min easy then TOUCH_REPS × 1 km with jogs."""
     rep = round(1000 / t.race_speed) if t.race_speed else 300
-    return [_step("warmup", "Warm-up", 900, "easy", t.run("easy", 2)),
+    return [_step("warmup", "Warm-up", 900, "easy"),
             _repeat(TOUCH_REPS, _step("interval", "Race pace", rep, "high", t.race() or t.hr(4)),
                     _step("recovery", "Easy jog", 120, "rest")),
             _step("cooldown", "Cool-down", 300, "easy")]
@@ -326,7 +326,7 @@ def variant(kind, phase, week, light):
 
 def _variant_steps(v, total, t):
     """A named hard session's steps, about `total` minutes with the warm-up and cool-down."""
-    warm = _step("warmup", "Warm-up", 900, "easy", t.run("easy", 2))
+    warm = _step("warmup", "Warm-up", 900, "easy")
     cool = _step("cooldown", "Cool-down", 600, "easy")
     main = total - 25
     jog = lambda s: _step("recovery", "Easy jog", s, "rest")
@@ -772,13 +772,20 @@ def _work_step(steps):
     return next((s for s in _flat(steps) if _is_work(s)), None)
 
 
-def _work_laps(steps, laps):
-    """[(lap, its step)] for the work steps. A watch running the plan's workout records a lap per step, so with as many
-    laps as steps (or one more, for a lap after the end) they pair in order and each rep is judged against its own
-    target (over/unders, pyramids). Otherwise the laps about as long as the first work step and near its pace count."""
+def pair_laps(steps, laps):
+    """[(lap, its step)] for every step, or None when they don't pair. A watch running a sent workout records a lap
+    per step, so with as many laps as steps (or one more, for a lap after the end) they pair in order."""
     flat = list(_flat(steps))
-    if len(laps) in (len(flat), len(flat) + 1):
-        return [(l, s) for l, s in zip(laps, flat) if _is_work(s) and l.get("speed") and l.get("duration_s")]
+    return list(zip(laps, flat)) if laps and len(laps) in (len(flat), len(flat) + 1) else None
+
+
+def _work_laps(steps, laps):
+    """[(lap, its step)] for the work steps. Laps paired with the steps (pair_laps) are each judged against their own
+    step's target (over/unders, pyramids). Otherwise the laps about as long as the first work step and near its pace
+    count."""
+    paired = pair_laps(steps, laps)
+    if paired:
+        return [(l, s) for l, s in paired if _is_work(s) and l.get("speed") and l.get("duration_s")]
     step = _work_step(steps)
     if not step:
         return []

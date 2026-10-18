@@ -41,7 +41,8 @@ The menu on the left picks the page; on phones it hides behind ☰. The page is 
 
 ![Workout](docs/screenshots/workout.png)
 
-- **Today's session** for running and cycling (and swimming with a plan that has swims), in steps like a Garmin workout. Without a plan it's picked from readiness, recovery time, sleep, HRV and Garmin's load focus, and can be a short easy session, a recovery session or a rest day; with one, it's the plan's session, with a note to take it easy on a poor day.
+- **Today's activity** at the top, if it's from today or the last 12 hours. A run or ride done from a session sent with **Send to watch** has **Review run**: each step against its lap, how many hit their target, the plan's verdict and what it moved, and a few lines from the coach (Claude is asked only when you press it).
+- **Today's session** for running and cycling (and swimming with a plan that has swims), in steps like a Garmin workout. Warm-ups and cool-downs go by feel, without a target. Without a plan it's picked from readiness, recovery time, sleep, HRV and Garmin's load focus, and can be a short easy session, a recovery session or a rest day; with one, it's the plan's session, with a note to take it easy on a poor day.
 - **The plan**: a strip of the next 7 days (click a day to see it), and the plan week by week (click a week for its sessions).
 - **Send to watch** puts a session in the Garmin calendar, and **Send next 7 days** the plan's coming week. The watch gets them at its next sync with the Garmin Connect app. Once sent, the button reads **On the watch ✓**; hover it to **Remove from watch**.
 - **The chat**: tell it what to change ("only 40 minutes today", "move Thursday to Friday"), and the sessions change at once. Nothing reaches the watch until you send it. One chat a day; **Undo all changes** takes them back.
@@ -95,7 +96,7 @@ Set one up with **+ Training plan** on the Workout page: the plan type, the date
 
 ## The chat
 
-It uses Claude Code on this PC, covered by your Claude subscription: install it and log in once by running `claude`. With `ANTHROPIC_API_KEY` in `.env` it uses the Anthropic API instead, which is faster but billed per message: about $0.001 on Haiku (the default) or $0.02–0.03 on Sonnet (`CHAT_MODEL=sonnet`). Each reply shows its tokens and price, the chat shows this month's total, and every message is logged in `data/chat_usage.csv`. On Claude Code it shows what the same chats would cost on the API with Haiku and with Sonnet, to compare before switching.
+It uses Claude Code on this PC, covered by your Claude subscription: install it and log in once by running `claude`. With `ANTHROPIC_API_KEY` in `.env` it uses the Anthropic API instead, which is faster but billed per message: about $0.001 on Haiku (the default) or $0.02–0.03 on Sonnet (`CHAT_MODEL=sonnet`). Each reply shows its tokens and price, the chat shows this month's total, and every message (and run review) is logged in `data/chat_usage.csv`. On Claude Code it shows what the same chats would cost on the API with Haiku and with Sonnet, to compare before switching.
 
 ## Syncing
 
@@ -143,6 +144,7 @@ backend/
   workouts.py       today's session, and Garmin's workout format
   plans.py          the training plan, and multisport.py for its rides and swims
   coach.py          the chat, and changes.py for the sessions it changes
+  review.py         a run against the workout it was run from
   db.py, config.py, login.py, demo.py
 frontend/           the page: index.html, styles.css, js/ (a module per page)
 desktop/main.py     the app window
@@ -158,7 +160,7 @@ data/               database and app data, not in git
 .venv\Scripts\python -m unittest discover tests
 ```
 
-They cover the numbers, the suggested workouts, the training plan, chat changes and the sync (against a stand-in for Garmin).
+They cover the numbers, the suggested workouts, the training plan, chat changes, run reviews and the sync (against a stand-in for Garmin).
 
 ## Troubleshooting
 

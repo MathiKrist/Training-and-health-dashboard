@@ -162,6 +162,12 @@ def set_efforts(conn, activity_id, bests):
     conn.execute("INSERT OR REPLACE INTO efforts (activity_id, bests) VALUES (?, ?)", (activity_id, json.dumps(bests)))
 
 
+def get_efforts(conn, activity_id):
+    """One run's best efforts: {metres: seconds}, or None if not worked out yet."""
+    row = conn.execute("SELECT bests FROM efforts WHERE activity_id = ?", (activity_id,)).fetchone()
+    return {int(m): s for m, s in json.loads(row["bests"]).items()} if row else None
+
+
 def all_efforts(conn):
     """Every run's best efforts: {activity_id: {metres: seconds}}."""
     return {r["activity_id"]: {int(m): s for m, s in json.loads(r["bests"]).items()}

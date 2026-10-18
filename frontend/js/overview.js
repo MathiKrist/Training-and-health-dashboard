@@ -200,19 +200,24 @@ function renderCalRing() {
 
 // The newest activity at the top: name, when, the sport's stats, and its route on a map when it has GPS
 export function renderLastActivity() {
-  const a = data.last_activity;
-  $("lastAct").hidden = !a;
+  lastCard($("lastAct"), data.last_activity, lastMap, "Last activity");
+}
+
+// A last activity card (here and on the Workout page), or hidden without an activity; `label` heads it
+export function lastCard(root, a, map, label) {
+  root.hidden = !a;
   if (!a) return;
   const days = Math.round((new Date(data.generated + "T12:00:00") - new Date(a.date + "T12:00:00")) / 864e5);
   const day = days === 0 ? "Today" : days === 1 ? "Yesterday" : COLUMNS.date[2](a);
-  $("lastWhen").textContent = ["Last activity", `${day}${a.start ? `, ${a.start.slice(11, 16)}` : ""}`, a.location].filter(Boolean).join(" · ");
-  $("lastName").textContent = a.name || a.type.replace(/_/g, " ");
-  $("lastEffect").innerHTML = effectCell(a);
-  $("lastEffect").hidden = !$("lastEffect").innerHTML;
-  $("lastStats").innerHTML = headlineStats(a);
+  root.querySelector(".eyebrow").textContent = [label, `${day}${a.start ? `, ${a.start.slice(11, 16)}` : ""}`, a.location].filter(Boolean).join(" · ");
+  root.querySelector("h2 button").textContent = a.name || a.type.replace(/_/g, " ");
+  const effect = root.querySelector(".last-effect");
+  effect.innerHTML = effectCell(a);
+  effect.hidden = !effect.innerHTML;
+  root.querySelector(".last-stats").innerHTML = headlineStats(a);
   // The name, date and stats open the activity; the map stays free to pan and zoom
-  document.querySelectorAll("#lastAct .last-open").forEach((el) => { el.dataset.act = a.id; });
-  lastMap.show(a.track, a.name || "last activity", a.sport);
+  root.querySelectorAll(".last-open").forEach((el) => { el.dataset.act = a.id; });
+  map.show(a.track, a.name || label.toLowerCase(), a.sport);
 }
 
 export const lastMap = routeMap($("lastMap"));

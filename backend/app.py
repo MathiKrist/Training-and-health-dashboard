@@ -29,6 +29,7 @@ import config
 import db
 import metrics
 import plans
+import review
 import sync
 import workouts
 
@@ -233,7 +234,8 @@ async def send_workout(sport: str, request: Request):
     called by the page's Send to watch button. The page sends the title it shows, so a workout that has changed
     since (after a sync) isn't sent unseen."""
     title = (await request.json()).get("title")
-    w = next((w for w in _dashboard_data()["workouts"] if w["sport"] == sport), None)
+    data = _dashboard_data()
+    w = next((w for w in data["workouts"] if w["sport"] == sport), None)
     if not w or w["title"] != title:
         return JSONResponse({"error": "Today's workout has changed. Look it over and press again."}, status_code=409)
     if not w["steps"]:
@@ -257,6 +259,9 @@ async def send_workout(sport: str, request: Request):
             plan_sent = json.loads(db.get_meta(conn, "plan_sent") or "[]")
             plan_sent.append({"date": today.isoformat(), "sport": sport, "key": w["key"], "id": created["workoutId"]})
             db.set_meta(conn, "plan_sent", json.dumps(plan_sent))
+        # Kept as sent, with why it was picked, for reviewing the run done from it
+        context = [data["plan"]["config"]["name"]] + w["why"] if w.get("plan") and data["plan"] else w["why"]
+        review.remember(conn, created["workoutId"], w, today, context, today)
         conn.commit()
     finally:
         conn.close()
@@ -469,6 +474,7 @@ async def send_plan_week(request: Request):
             client.schedule_workout(created["workoutId"], s["date"])
             sent.append({"date": s["date"], "sport": s["sport"], "key": s["key"], "id": created["workoutId"]})
             db.set_meta(conn, "plan_sent", json.dumps(sent))  # saved per session, so a failure halfway keeps what went
+            review.remember(conn, created["workoutId"], {**s, "plan": True}, day, review.plan_context(plan, s["date"]), today)
             conn.commit()
     except Exception as e:
         log.error("Sending the plan's week failed: %s", e)
@@ -476,6 +482,71 @@ async def send_plan_week(request: Request):
     finally:
         conn.close()
     return {"status": "sent"}
+
+
+def _review(activity_id):
+    """(the activity's review, the activity), or (None, None) when it wasn't run from a workout the dashboard sent."""
+    data = _dashboard_data()
+    conn = db.connect(DB_PATH)
+    try:
+        row = conn.execute(f"SELECT {metrics.ACTIVITY_SELECT} FROM activities WHERE id = ?", (activity_id,)).fetchone()
+        if not row:
+            return None, None
+        a = next((x for x in data["activities"] if x["id"] == activity_id), None)
+        if not a:
+            return None, None
+        a = {**a, "workout_id": row["workout_id"], "aerobic_te": row["aerobic_te"], "anaerobic_te": row["anaerobic_te"]}
+        session = review.planned(a, review.load_archive(conn), json.loads(db.get_meta(conn, "workouts_sent") or "[]"),
+                                 json.loads(db.get_meta(conn, "plan_sent") or "[]"), data["plan"], data["workouts"])
+        if not session:
+            return None, None
+        r = review.build(a, session, db.get_laps(conn, activity_id), data["plan"])
+        r["note"] = review.get_note(conn, activity_id)
+        return r, a
+    finally:
+        conn.close()
+
+
+@app.get("/api/review/{activity_id}")
+def get_review(activity_id: int):
+    """How a run went against the workout it was run from: each step against its lap, and the coach's note if it has
+    been asked for before."""
+    if DEMO:
+        import demo
+        demo.fill_details(DB_PATH, activity_id)
+    else:
+        sync.fetch_details(DB_PATH, activity_id)  # the laps, if they aren't stored yet
+    r, _ = _review(activity_id)
+    if not r:
+        return JSONResponse({"error": "This activity wasn't run from a workout the dashboard sent."}, status_code=404)
+    return r
+
+
+@app.post("/api/review/{activity_id}/note")
+async def review_note(activity_id: int):
+    """The coach's note on a reviewed run. Asked once; kept, so opening the review again costs nothing."""
+    r, a = _review(activity_id)
+    if not r:
+        return JSONResponse({"error": "This activity wasn't run from a workout the dashboard sent."}, status_code=404)
+    if r["note"]:
+        return r["note"]
+    if DEMO:
+        return JSONResponse({"error": "Demo mode doesn't ask the coach."}, status_code=400)
+    if not coach.backend():
+        return JSONResponse({"error": "The coach needs Claude Code installed on the machine running the server, "
+                                      "or ANTHROPIC_API_KEY in .env."}, status_code=400)
+    text, error, used = await asyncio.to_thread(coach.ask, review.SYSTEM, review.prompt(r))
+    if error:
+        return JSONResponse({"error": error}, status_code=502)
+    note = {"text": text, "usage": {k: used[k] if used[k] is None else round(used[k], 6)
+                                    for k in ("tokens", "cost", "haiku", "sonnet")} if used else None}
+    conn = db.connect(DB_PATH)
+    try:
+        review.save_note(conn, activity_id, note)
+        conn.commit()
+    finally:
+        conn.close()
+    return note
 
 
 @app.get("/api/chat")

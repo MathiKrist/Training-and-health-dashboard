@@ -65,7 +65,7 @@ Use custom steps only for something a standard session can't express.
 - Keep the week's intent. If a key session (intervals, long run, long ride) can't happen today, move it to a free day \
 rather than drop it, and avoid two hard days in a row or a hard day right before the long run or ride. Swims are \
 best changed with minutes; their steps can't set a pace. When shortening, keep the warm-up \
-and cool-down and cut the main set.
+and cool-down and cut the main set. Warm-ups and cool-downs go by feel: they never get a target.
 - If the athlete says they lack time today, shorten today's session; if the work matters for the week, put the rest on \
 a later easy or free day.
 - Moving a session onto a day that already has one replaces it. Say so, and move or drop that one deliberately.
@@ -557,11 +557,12 @@ class CliError(Exception):
     pass
 
 
-def _run_cli(prompt, session):
-    """One answer from Claude Code: (the structured answer, its session id, its tokens per model)."""
+def _run_cli(prompt, session, system=None, schema=None):
+    """One answer from Claude Code: (the structured answer, its session id, its tokens per model). The chat's system
+    prompt and answer shape unless given others."""
     args = [_claude_code(), "-p", "--output-format", "json", "--model", CLI_MODEL, "--effort", "medium",
             "--tools", "", "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands",
-            "--system-prompt", CLI_SYSTEM, "--json-schema", json.dumps(_cli_schema())]
+            "--system-prompt", system or CLI_SYSTEM, "--json-schema", json.dumps(schema or _cli_schema())]
     if session:
         args += ["--resume", session]
     CLI_DIR.mkdir(parents=True, exist_ok=True)
@@ -621,3 +622,48 @@ def _send_cli(chat, text, dashboard, today, apply):
     except CliError as e:
         return "", str(e), _finish(used)
     return reply, None, _finish(used)
+
+
+# ---- One answer without tools or a conversation (the run review)
+
+NOTE_SCHEMA = {"type": "object", "required": ["note"],
+               "properties": {"note": {"type": "string", "description": "What the athlete reads."}}}
+
+
+def ask(system, prompt):
+    """(text, error, tokens used) for one question, through the API or Claude Code as the chat goes. Its tokens are
+    logged with the chat's."""
+    if backend() == "api":
+        used = _meter("api", MODEL)
+        try:
+            response = anthropic.Anthropic().messages.create(
+                model=MODEL, max_tokens=4000, system=system, messages=[{"role": "user", "content": prompt}],
+                output_config={"effort": "low"})
+            u = response.usage
+            used["rounds"] += 1
+            _count(used, response.model, u.input_tokens or 0, u.output_tokens or 0, u.cache_creation_input_tokens or 0,
+                   u.cache_read_input_tokens or 0)
+            if response.stop_reason == "refusal":
+                return "", "Claude declined to answer that.", _finish(used)
+            return "\n\n".join(b.text for b in response.content if b.type == "text").strip(), None, _finish(used)
+        except anthropic.AuthenticationError:
+            error = "The Anthropic API key in .env was refused."
+        except anthropic.RateLimitError:
+            error = "Too many requests to Claude just now. Try again in a minute."
+        except anthropic.APIConnectionError:
+            error = "Couldn't reach Claude. Is the internet connection up?"
+        except anthropic.APIStatusError as e:
+            log.error("Asking Claude failed: %s", e)
+            error = f"Claude answered with an error ({e.status_code})."
+        return "", error, _finish(used)
+    used = _meter("claude_code", f"claude-{CLI_MODEL}")
+    try:
+        answer, _, models = _run_cli(prompt, None, system, NOTE_SCHEMA)
+    except CliError as e:
+        return "", str(e), _finish(used)
+    used["rounds"] += 1
+    for model, u in models.items():
+        used["model"] = model
+        _count(used, model, u.get("inputTokens") or 0, u.get("outputTokens") or 0,
+               u.get("cacheCreationInputTokens") or 0, u.get("cacheReadInputTokens") or 0)
+    return str(answer.get("note") or "").strip(), None, _finish(used)
