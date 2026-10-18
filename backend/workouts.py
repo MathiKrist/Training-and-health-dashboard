@@ -331,3 +331,66 @@ def to_garmin(w, day):
     if w["why"]:
         workout["description"] = " · ".join(w["why"])
     return workout
+
+
+# ---- And back: a workout fetched from Garmin, for reviewing a run done from one sent before the dashboard kept them
+
+STEP_LABEL = {"warmup": "Warm-up", "cooldown": "Cool-down", "recovery": "Easy", "rest": "Rest"}
+WORK_LABEL = {"anaerobic": "Fast", "high": "Hard", "easy": "Steady"}
+
+
+def _intensity_back(kind, target, s, t):
+    """How hard a step fetched from Garmin is, from its type and target against the athlete's paces and FTP."""
+    if kind in ("warmup", "cooldown"):
+        return "easy"
+    if kind in ("recovery", "rest"):
+        return "rest"
+    if not target:
+        return "anaerobic" if s <= 60 else "easy"  # strides and sprints go by feel
+    if target["type"] == "pace":
+        speed = 2000 / (target["slow"] + target["fast"])
+        if t.five and speed >= t.five * 1.04:
+            return "anaerobic"
+        return "high" if t.lt and speed >= t.lt * RUN_PACE["steady"][0] else "easy"
+    if target["type"] == "power":
+        return "high" if t.ftp and (target["lo"] + target["hi"]) / 2 >= t.ftp * BIKE_POWER["tempo"][0] else "easy"
+    return "high" if target["zone"] >= 3 else "easy"
+
+
+def _steps_back(steps, t):
+    out = []
+    for g in sorted(steps, key=lambda g: g.get("stepOrder") or 0):
+        if g.get("type") == "RepeatGroupDTO" or (g.get("stepType") or {}).get("stepTypeKey") == "repeat":
+            out.append(_repeat(int(g.get("numberOfIterations") or 1), *_steps_back(g.get("workoutSteps") or [], t)))
+            continue
+        kind = (g.get("stepType") or {}).get("stepTypeKey") or "interval"
+        kind = kind if kind in STEP_TYPE else "interval"
+        key = (g.get("targetType") or {}).get("workoutTargetTypeKey")
+        one, two = g.get("targetValueOne"), g.get("targetValueTwo")
+        target = None
+        if key == "pace.zone" and one and two:  # m/s
+            target = {"type": "pace", "slow": round(1000 / min(one, two)), "fast": round(1000 / max(one, two))}
+        elif key == "power.zone" and one and two:
+            target = {"type": "power", "lo": round(min(one, two)), "hi": round(max(one, two))}
+        elif key == "heart.rate.zone" and g.get("zoneNumber"):
+            target = t.hr(int(g["zoneNumber"]))
+        value = float(g.get("endConditionValue") or 0)
+        by_distance = (g.get("endCondition") or {}).get("conditionTypeKey") == "distance"
+        s = value
+        if by_distance:
+            s = value * (target["slow"] + target["fast"]) / 2000 if target and target["type"] == "pace" else 0
+        intensity = _intensity_back(kind, target, s, t)
+        label = STEP_LABEL.get(kind) or WORK_LABEL[intensity]
+        step = _step(kind, label, s, intensity, target, g.get("description"))
+        out.append({**step, "m": round(value)} if by_distance else step)
+    return out
+
+
+def from_garmin(g, t):
+    """A workout as Garmin holds it, in the shape the dashboard sends: {sport, title, steps, total_s, why}. Garmin
+    keeps no step names, so steps are named by their type and how hard they are."""
+    sports = {v["sportTypeKey"]: k for k, v in GARMIN_SPORT.items()}
+    steps = [s for seg in g.get("workoutSegments") or [] for s in _steps_back(seg.get("workoutSteps") or [], t)]
+    description = g.get("description") or ""
+    return {"sport": sports.get((g.get("sportType") or {}).get("sportTypeKey"), "run"), "title": g.get("workoutName") or "Workout",
+            "steps": steps, "total_s": sum(s["s"] for s in _flat(steps)), "why": [x for x in description.split(" · ") if x]}

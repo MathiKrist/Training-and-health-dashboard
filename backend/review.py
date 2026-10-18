@@ -4,16 +4,22 @@ from the dashboard.
 Garmin marks an activity done from a scheduled workout with that workout's id, and the dashboard keeps each workout
 it sends under its id (the archive), as it went to the watch: a plan's paces adapt later, so the plan's own session
 can differ by the time it's reviewed. Each step is set against the lap the watch recorded for it."""
+import hashlib
 import json
+import logging
 from datetime import date, timedelta
 
 import coach
 import db
 import plans
+import workouts
 from workouts import _flat
+
+log = logging.getLogger("review")
 
 ARCHIVE_KEY = "workouts_archive"
 ARCHIVE_DAYS = 90  # how long a sent workout is kept for its review
+RECOVER_DAYS = 14  # how far back runs from workouts sent before they were kept get theirs fetched from Garmin
 NOTES_KEY = "run_reviews"
 NOTES_KEPT = 30
 SPORTS = ("run", "bike")  # laps line up with the steps on runs and rides; a swim's lengths don't
@@ -47,6 +53,37 @@ def remember(conn, workout_id, w, day, context, today):
     db.set_meta(conn, ARCHIVE_KEY, json.dumps(archive))
 
 
+def recover(conn, client, today):
+    """Fetch from Garmin the workouts the dashboard sent but didn't keep (sent before it kept them): today's, and
+    those recent runs were done from. `client()` gives the Garmin client, only asked for when one is missing.
+    Returns how many it kept."""
+    archive = load_archive(conn)
+    sent = json.loads(db.get_meta(conn, "workouts_sent") or "[]")
+    plan_sent = json.loads(db.get_meta(conn, "plan_sent") or "[]")
+    run_from = {r[0] for r in conn.execute(
+        "SELECT json_extract(raw, '$.workoutId') FROM activities WHERE date >= ? AND json_extract(raw, '$.workoutId') IS NOT NULL",
+        ((today - timedelta(days=RECOVER_DAYS)).isoformat(),))}
+    todo = [(x, False) for x in sent if x.get("date") == today.isoformat() or x.get("id") in run_from] +         [(x, True) for x in plan_sent if x.get("id") in run_from]
+    todo = [(x, plan) for x, plan in todo if str(x.get("id")) not in archive]
+    if not todo:
+        return 0
+    profile = json.loads(db.get_meta(conn, "training_profile") or "{}")
+    pred = conn.execute("SELECT pred_5k FROM daily WHERE pred_5k IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
+    t = workouts.Targets(profile, pred[0] if pred else None)
+    kept = 0
+    for x, plan in todo:
+        try:
+            w = workouts.from_garmin(client().get_workout_by_id(x["id"]), t)
+        except Exception as e:  # deleted on Garmin since, most likely
+            log.info("Couldn't fetch the sent workout %s: %s", x["id"], e)
+            continue
+        remember(conn, x["id"], {**w, "sport": x.get("sport") or w["sport"], "plan": plan},
+                 date.fromisoformat(x["date"]), w["why"], today)
+        kept += 1
+    conn.commit()
+    return kept
+
+
 def plan_context(plan, day):
     """Why a plan session is on its day: the plan's name, its week and the phase."""
     for i, wk in enumerate(plan["weeks"]):
@@ -74,8 +111,10 @@ def planned(a, archive, sent, plan_sent, plan, todays):
         return None
     if str(wid) in archive:
         return archive[str(wid)]
-    if any(x.get("id") == wid for x in sent):
-        w = next((w for w in todays if w["sport"] == a["sport"] and w.get("steps")), None)
+    mine = next((x for x in sent if x.get("id") == wid), None)
+    if mine:
+        # Only while today's session is still the one that was sent: it changes as the day's numbers do
+        w = next((w for w in todays if w["sport"] == a["sport"] and w.get("steps") and w["title"] == mine.get("title")), None)
         if w and a["date"] == date.today().isoformat():
             return {"date": a["date"], "sport": w["sport"], "title": w["title"], "kind": w["kind"], "steps": w["steps"],
                     "total_s": w["total_s"], "km": w.get("km"), "why": w["why"], "plan": bool(w.get("plan"))}
@@ -199,11 +238,19 @@ def prompt(r):
 
 # ---- The coach's notes, kept so a review opened again costs nothing
 
-def get_note(conn, activity_id):
-    return json.loads(db.get_meta(conn, NOTES_KEY) or "{}").get(str(activity_id))
+def _key(r):
+    """Changes with the numbers the note is written from, so a note on other numbers (the wrong session, laps
+    fetched since) isn't shown again."""
+    return hashlib.sha256(prompt(r).encode()).hexdigest()[:16]
 
 
-def save_note(conn, activity_id, note):
+def get_note(conn, r):
+    note = json.loads(db.get_meta(conn, NOTES_KEY) or "{}").get(str(r["id"]))
+    return note if note and note.get("key") == _key(r) else None
+
+
+def save_note(conn, r, note):
     notes = json.loads(db.get_meta(conn, NOTES_KEY) or "{}")
-    notes[str(activity_id)] = note
+    notes.pop(str(r["id"]), None)  # a new note goes to the end, so the oldest are dropped first
+    notes[str(r["id"])] = {**note, "key": _key(r)}
     db.set_meta(conn, NOTES_KEY, json.dumps(dict(list(notes.items())[-NOTES_KEPT:])))

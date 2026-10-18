@@ -219,6 +219,7 @@ body {
 .wk-send button[disabled] { opacity: 0.6; cursor: default; }
 .wk-send span { color: var(--muted); font-size: 0.85rem; }
 .wk-send span.error { color: var(--fatigue); }
+.wk-send span.done { color: var(--good); font-weight: 600; font-size: 0.95rem; }
 /* Block widths follow each step's length, heights its intensity, like the workout preview on the watch */
 .wk-bar { display: flex; gap: 2px; height: 2.6rem; align-items: flex-end; }
 .wk-bar i { display: block; min-width: 2px; border-radius: 2px; }

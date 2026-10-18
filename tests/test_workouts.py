@@ -112,6 +112,15 @@ class GarminFormat(unittest.TestCase):
         self.assertLess(hard["targetValueOne"], hard["targetValueTwo"])  # m/s, the slow end first
         self.assertEqual(g["estimatedDurationInSecs"], w["total_s"])
 
+    def test_back_from_garmin_as_sent(self):
+        t = workouts.Targets(PROFILE, 1500)
+        for kind in ("threshold", "vo2", "anaerobic"):
+            w = {"sport": "run", "title": kind, "steps": workouts._run_steps(kind, 50, t), "total_s": 0, "why": ["Readiness 70"]}
+            back = workouts.from_garmin(workouts.to_garmin(w, TODAY), t)
+            same = lambda steps: [(s["kind"], s["intensity"], s["s"], s["target"]) for s in workouts._flat(steps)]
+            self.assertEqual(same(back["steps"]), same(w["steps"]))
+            self.assertEqual((back["sport"], back["why"]), ("run", ["Readiness 70"]))
+
     def test_warm_up_and_cool_down_go_by_feel(self):
         w = recommend(focus="AEROBIC_HIGH_SHORTAGE")[0]
         self.assertEqual([(s["kind"], s["target"]) for s in (w["steps"][0], w["steps"][-1])],

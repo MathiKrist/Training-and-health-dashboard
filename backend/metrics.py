@@ -413,6 +413,16 @@ def build_dashboard(db_path=None):
         recent_acts, today, readiness=today_vals["readiness"], status=status and status["code"], focus=focus_phrase,
         focus_title=focus and focus["title"], race=race, profile=profile, pred_5k=pred_5k, sent=sent, **body)
 
+    # A suggestion sent to the watch stays today's session: the day's numbers change after a run (readiness drops, the
+    # run is the last hard session), and the session that was on the watch shouldn't change with them
+    for x in sent:
+        kept = archive.get(str(x.get("id"))) if x.get("date") == today.isoformat() else None
+        if kept and not kept.get("plan"):
+            w = {"sport": kept["sport"], "label": workouts.ALL_SPORTS[kept["sport"]], "kind": kept.get("kind"),
+                 "title": kept["title"], "total_s": kept["total_s"], "km": kept.get("km"), "why": kept["why"],
+                 "steps": kept["steps"], "paces": kept["sport"] == "run", "sent": True}
+            workout_list = [w if v["sport"] == w["sport"] else v for v in workout_list]
+
     # The training plan; on its days its session replaces the suggested one for its sport, on the days between it's a
     # rest day; its swims come after the suggested sports
     plan = plans.build(plan_cfg, recent_acts, plan_laps, profile, today, plan_sent, changes) if plan_cfg else None
@@ -450,6 +460,14 @@ def build_dashboard(db_path=None):
             x = chat_changes.session(c, targets)
             upcoming.append({"date": c["date"], "sport": c["sport"], "title": x["title"] if x else "Rest day",
                              "total_s": x["total_s"] if x else 0, "km": x["km"] if x else None})
+
+    # Today's sessions already run: an activity today was done from the workout sent for it
+    run_today = {a["workout_id"] for a in acts if a["date"] == today.isoformat() and a["workout_id"]}
+    for w in workout_list:
+        mine = [x["id"] for x in sent if x.get("date") == today.isoformat() and x.get("sport") == w["sport"]
+                and x.get("title") == w["title"]] +                [x["id"] for x in plan_sent if x.get("date") == today.isoformat() and x.get("sport", "run") == w["sport"]
+                and w.get("key") and x.get("key") == w["key"]]
+        w["done"] = any(i in run_today for i in mine)
 
     # Whether each sport's newest activity was run from a workout the dashboard sent, so it can be reviewed
     last_by_sport = {}

@@ -501,7 +501,7 @@ def _review(activity_id):
         if not session:
             return None, None
         r = review.build(a, session, db.get_laps(conn, activity_id), data["plan"])
-        r["note"] = review.get_note(conn, activity_id)
+        r["note"] = review.get_note(conn, r)
         return r, a
     finally:
         conn.close()
@@ -516,6 +516,7 @@ def get_review(activity_id: int):
         demo.fill_details(DB_PATH, activity_id)
     else:
         sync.fetch_details(DB_PATH, activity_id)  # the laps, if they aren't stored yet
+        sync.fetch_sent_workouts(DB_PATH)  # the workout it was run from, if it was sent before they were kept
     r, _ = _review(activity_id)
     if not r:
         return JSONResponse({"error": "This activity wasn't run from a workout the dashboard sent."}, status_code=404)
@@ -542,7 +543,7 @@ async def review_note(activity_id: int):
                                     for k in ("tokens", "cost", "haiku", "sonnet")} if used else None}
     conn = db.connect(DB_PATH)
     try:
-        review.save_note(conn, activity_id, note)
+        review.save_note(conn, r, note)
         conn.commit()
     finally:
         conn.close()

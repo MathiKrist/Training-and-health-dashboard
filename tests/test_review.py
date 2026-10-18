@@ -1,11 +1,16 @@
 """Reviewing a run against the workout it was run from. Run from the project folder: python -m unittest discover tests"""
+import json
 import sys
+import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
+import db  # noqa: E402
+import metrics  # noqa: E402
 import review  # noqa: E402
+import sync  # noqa: E402
 import workouts  # noqa: E402
 
 TODAY = date.today().isoformat()
@@ -40,6 +45,12 @@ class Planned(unittest.TestCase):
     def test_not_one_the_dashboard_sent(self):
         self.assertIsNone(review.planned(run(workout_id=12), {"77": SESSION}, [], [], None, []))
         self.assertIsNone(review.planned(run(workout_id=None), {"77": SESSION}, [], [], None, []))
+
+    def test_not_todays_session_once_it_has_changed(self):
+        # Sent as anaerobic repeats; after the run, today's suggestion became a recovery run
+        sent = [{"date": TODAY, "sport": "run", "title": "Anaerobic repeats", "id": 77}]
+        now = {**SESSION, "title": "Recovery run", "why": []}
+        self.assertIsNone(review.planned(run(), {}, sent, [], None, [now]))
 
     def test_sent_before_the_archive_was_kept(self):
         today = {**SESSION, "label": "Running", "why": ["Readiness 74"]}
@@ -80,6 +91,63 @@ class Compare(unittest.TestCase):
         text = review.prompt(review.build(run(), SESSION, laps([mid] * 4), None))
         self.assertIn("Why this session: Readiness 74", text)
         self.assertIn("4 of 4 reps on target", text)
+
+
+ANAEROBIC = workouts._run_steps("anaerobic", 50, T)
+
+
+class FakeGarmin:
+    def __init__(self):
+        self.asked = []
+
+    def get_workout_by_id(self, i):
+        self.asked.append(i)
+        w = {"sport": "run", "title": "Anaerobic repeats", "steps": ANAEROBIC, "total_s": 0, "why": ["Readiness 70"]}
+        return workouts.to_garmin(w, date.today())
+
+
+class SentBeforeTheyWereKept(unittest.TestCase):
+    """This morning's anaerobic repeats, sent before the dashboard kept sent workouts, and run at noon."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.dir.name) / "test.db")
+        conn = db.connect(self.path)
+        start = datetime.combine(date.today(), datetime.min.time()) + timedelta(minutes=1)
+        db.upsert_activity(conn, sync.parse_activity({
+            "activityId": 5, "startTimeLocal": start.strftime("%Y-%m-%d %H:%M:%S"), "activityType": {"typeKey": "running"},
+            "distance": 6260, "movingDuration": 2746, "averageHR": 156, "workoutId": 77}))
+        db.set_meta(conn, "workouts_sent", json.dumps([{"date": TODAY, "sport": "run", "title": "Anaerobic repeats", "id": 77}]))
+        db.set_meta(conn, "training_profile", json.dumps({"lt_speed": 1000 / 330, "zones": [99, 118, 138, 158, 177, 198]}))
+        conn.commit()
+        self.conn = conn
+
+    def tearDown(self):
+        self.conn.close()
+        self.dir.cleanup()
+
+    def test_fetched_back_from_garmin_once(self):
+        garmin = FakeGarmin()
+        self.assertEqual(review.recover(self.conn, lambda: garmin, date.today()), 1)
+        kept = review.load_archive(self.conn)["77"]
+        self.assertEqual((kept["title"], kept["why"]), ("Anaerobic repeats", ["Readiness 70"]))
+        self.assertEqual([s["intensity"] for s in workouts._flat(kept["steps"])][:3], ["easy", "anaerobic", "rest"])
+        self.assertEqual(review.recover(self.conn, lambda: garmin, date.today()), 0)
+        self.assertEqual(garmin.asked, [77])
+
+    def test_a_note_on_other_numbers_isnt_shown_again(self):
+        wrong = review.build(run(), {**SESSION, "title": "Recovery run"}, [], None)
+        right = review.build(run(), SESSION, [], None)
+        review.save_note(self.conn, wrong, {"text": "This was a recovery run in name only."})
+        self.assertIsNone(review.get_note(self.conn, right))
+        self.assertEqual(review.get_note(self.conn, wrong)["text"], "This was a recovery run in name only.")
+
+    def test_todays_session_stays_as_sent_and_is_done(self):
+        review.recover(self.conn, lambda: FakeGarmin(), date.today())
+        d = metrics.build_dashboard(self.path)
+        w = next(w for w in d["workouts"] if w["sport"] == "run")
+        self.assertEqual((w["title"], w["sent"], w["done"]), ("Anaerobic repeats", True, True))
+        self.assertTrue(d["last_by_sport"]["run"]["review"])
 
 
 if __name__ == "__main__":

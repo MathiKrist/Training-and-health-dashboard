@@ -202,8 +202,10 @@ export function showWorkout(w, day = null) {
 
   const btn = $("wkSend"), note = $("wkSendNote");
   watchButton(btn, w.sent, "Send to watch");
-  note.className = "";
-  note.textContent = w.sent ? "In today's Garmin calendar" : "Adds it to today's Garmin calendar";
+  // Once run from the watch, there's nothing left to send or take off
+  btn.hidden = !!w.done;
+  note.className = w.done ? "done" : "";
+  note.textContent = w.done ? "Done ✓" : w.sent ? "In today's Garmin calendar" : "Adds it to today's Garmin calendar";
 }
 
 $("workoutSport").addEventListener("click", (e) => {

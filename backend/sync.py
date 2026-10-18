@@ -14,6 +14,7 @@ from garminconnect import Garmin
 import config
 import db
 import metrics
+import review
 
 log = logging.getLogger("sync")
 _lock = threading.Lock()
@@ -250,6 +251,24 @@ def fetch_details(db_path, activity_id):
         conn.close()
 
 
+def fetch_sent_workouts(db_path):
+    """review.recover() from the page, when a run is reviewed before the next sync has fetched its workout."""
+    global _shared_client
+    conn = db.connect(db_path)
+    def client():
+        global _shared_client
+        _shared_client = _shared_client or _client()
+        return _shared_client
+
+    try:
+        review.recover(conn, client, date.today())
+    except Exception as e:
+        _shared_client = None
+        log.warning("Fetching the sent workouts failed: %s", e)
+    finally:
+        conn.close()
+
+
 def fetch_vo2max_history(client, start, end):
     """One row per day Garmin updated the VO2 max estimate."""
     rows = _try(client.get_max_metrics_range, start.isoformat(), end.isoformat()) or []
@@ -402,6 +421,13 @@ def run_sync(db_path=None):
             if points is not None:  # a failed request is retried next sync
                 db.set_track(conn, row["id"], points)
                 conn.commit()
+
+        # Workouts the dashboard sent before it kept them, fetched back for the review of runs done from them, and
+        # so today's sent session stays the one on the watch
+        try:
+            review.recover(conn, lambda: client, date.today())
+        except Exception as e:
+            log.info("Couldn't fetch the sent workouts back: %s", e)
 
         # Laps of the training plan's runs, so the plan can see how the intervals went
         plan = json.loads(db.get_meta(conn, "training_plan") or "null")
