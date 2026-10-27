@@ -13,7 +13,7 @@ from datetime import date, timedelta
 import changes as chat_changes
 import multisport
 import workouts
-from workouts import LT_FROM_5K, _clamp, _flat, _repeat, _round5, _run_steps, _step, km_of
+from workouts import LT_FROM_5K, VARIANTS, _clamp, _flat, _repeat, _round5, _run_steps, _step, _variant_steps, km_of
 
 GOALS = {"race": "Race", "triathlon": "Triathlon", "fitness": "General fitness", "base": "Base builder",
          "speed": "Speed block", "comeback": "Return to running", "maintain": "Maintenance"}
@@ -69,10 +69,6 @@ HR_MODEL_DAYS = 60  # easy runs this long before the plan set the expected pace 
 HARD_KINDS = ("threshold", "vo2", "anaerobic", "race_pace")
 KEY_KINDS = HARD_KINDS + ("long",)
 TITLES = {**workouts.TITLES, "race_pace": "Race pace intervals", "race": "Race"}
-# The named sessions of each hard kind, and what they're called
-VARIANTS = {"cruise": "Cruise intervals", "tempo": "Tempo run", "progression": "Threshold progression",
-            "over_under": "Over/unders", "1k": "1 km repeats", "800": "800 m repeats", "3min": "3-minute intervals",
-            "pyramid": "Pyramid", "400": "400 m repeats", "600": "600 m repeats", "400_sets": "400 m sets"}
 # The kinds of long run, and what they're called
 LONG_VARIANTS = {"long": "Long run", "progressive": "Progressive long run", "fast_finish": "Fast-finish long run",
                  "surges": "Long run with surges", "race_finish": "Race-pace finish long run",
@@ -306,13 +302,6 @@ def _touch_steps(t):
             _step("cooldown", "Cool-down", 300, "easy")]
 
 
-def _dist_s(metres, target, fallback):
-    """Seconds to run `metres` at the middle of a pace target, or `fallback` without one."""
-    if (target or {}).get("type") == "pace":
-        return round(metres / 1000 * (target["slow"] + target["fast"]) / 2)
-    return fallback
-
-
 def variant(kind, phase, week, light):
     """Which named session a hard kind is this week: threshold sessions are tempo and progression runs in the base
     phase, cruise intervals and over/unders after; VO2 max and speed sessions rotate. Lighter and taper weeks keep to
@@ -322,53 +311,6 @@ def variant(kind, phase, week, light):
     if kind == "vo2":
         return "3min" if light else ("1k", "800", "3min", "pyramid")[week % 4]
     return ("400", "600", "400_sets")[week % 3]
-
-
-def _variant_steps(v, total, t):
-    """A named hard session's steps, about `total` minutes with the warm-up and cool-down."""
-    warm = _step("warmup", "Warm-up", 900, "easy")
-    cool = _step("cooldown", "Cool-down", 600, "easy")
-    main = total - 25
-    jog = lambda s: _step("recovery", "Easy jog", s, "rest")
-    if v == "cruise":
-        return _run_steps("threshold", total, t)
-    if v == "3min":
-        return _run_steps("vo2", total, t)
-    if v == "tempo":
-        return [warm, _step("interval", "Tempo", _clamp(main, 20, 30) * 60, "high", t.run("tempo", 3)), cool]
-    if v == "progression":
-        return [_step("interval", "Easy", max(10, total - 25) * 60, "easy", t.run("easy", 2)),
-                _step("interval", "Steady", 600, "high", t.run("tempo", 3)),
-                _step("interval", "Threshold", 600, "high", t.run("threshold", 4)),
-                _step("cooldown", "Cool-down", 300, "easy")]
-    if v == "over_under":
-        n = _clamp(round(main / 6), 3, 4)
-        return [warm, _repeat(n, _step("interval", "Over", 120, "high", t.run("over", 4)),
-                              _step("interval", "Under", 120, "high", t.run("under", 3)), jog(120)), cool]
-    vo2 = t.run("vo2", 5)
-    if v == "1k":
-        return [warm, _repeat(_clamp(round(main / 6.5), 4, 6), _step("interval", "1 km", _dist_s(1000, vo2, 240), "high", vo2),
-                              jog(150)), cool]
-    if v == "800":
-        return [warm, _repeat(_clamp(round(main / 5), 5, 8), _step("interval", "800 m", _dist_s(800, vo2, 190), "high", vo2),
-                              jog(120)), cool]
-    if v == "pyramid":
-        mins = (1, 2, 3, 4, 3, 2, 1)
-        steps = [warm]
-        for j, m in enumerate(mins):
-            steps.append(_step("interval", f"{m} min hard", m * 60, "high", vo2))
-            if j < len(mins) - 1:
-                steps.append(jog(m * 60))
-        return steps + [cool]
-    # Speed: 400 m and longer, so the heart rate gets up and stays there
-    fast = t.pace("anaerobic")
-    note = None if fast else "Fast but controlled, about mile pace"
-    rep = lambda m, fallback: _step("interval", f"{m} m", _dist_s(m, fast, fallback), "anaerobic", fast, note)
-    if v == "400":
-        return [warm, _repeat(_clamp(round(main / 3), 8, 10), rep(400, 85), jog(90)), cool]
-    if v == "600":
-        return [warm, _repeat(_clamp(round(main / 4.5), 5, 7), rep(600, 130), jog(120)), cool]
-    return [warm, _repeat(5, rep(400, 85), jog(60)), jog(180), _repeat(5, rep(400, 85), jog(60)), cool]  # 400 m sets
 
 
 def run_walk(day, kind, progress, t):

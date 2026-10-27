@@ -98,6 +98,28 @@ class Targets(unittest.TestCase):
         self.assertEqual(t.hr(5), {"type": "hr", "zone": 5, "lo": 177, "hi": 198})
 
 
+class Rotation(unittest.TestCase):
+    def sent(self, days_ago, title):
+        return {"date": (TODAY - timedelta(days=days_ago)).isoformat(), "sport": "run", "title": title}
+
+    def test_hard_run_follows_the_last_of_its_kind_sent(self):
+        titles = [workouts.VARIANTS[v] for v in workouts.DAILY["anaerobic"]]
+        for i, title in enumerate(titles):
+            w = recommend(focus="ANAEROBIC_SHORTAGE", history=[self.sent(9, "Tempo run"), self.sent(3, title), self.sent(6, titles[i - 1])])[0]
+            self.assertEqual((w["kind"], w["title"]), ("anaerobic", titles[(i + 1) % len(titles)]))
+        # Sent before the suggestion rotated, under the kind's old name
+        self.assertEqual(recommend(focus="AEROBIC_HIGH_SHORTAGE", history=[self.sent(4, "Threshold intervals")])[0]["title"],
+                         "Over/unders")
+
+    def test_today_stays_put_once_sent(self):
+        first = recommend(focus="ANAEROBIC_SHORTAGE")[0]["title"]
+        self.assertEqual(recommend(focus="ANAEROBIC_SHORTAGE", history=[self.sent(0, first)])[0]["title"], first)
+
+    def test_without_one_sent_it_changes_by_the_day(self):
+        days = {workouts.daily_variant("anaerobic", TODAY + timedelta(days=i), []) for i in range(4)}
+        self.assertEqual(days, set(workouts.DAILY["anaerobic"]))
+
+
 class GarminFormat(unittest.TestCase):
     def test_steps_and_repeats(self):
         w = recommend(focus="AEROBIC_HIGH_SHORTAGE")[0]

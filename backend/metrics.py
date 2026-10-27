@@ -411,7 +411,8 @@ def build_dashboard(db_path=None):
     today_vals["recovery_h"] = body["recovery_h"]
     workout_list = workouts.recommend(
         recent_acts, today, readiness=today_vals["readiness"], status=status and status["code"], focus=focus_phrase,
-        focus_title=focus and focus["title"], race=race, profile=profile, pred_5k=pred_5k, sent=sent, **body)
+        focus_title=focus and focus["title"], race=race, profile=profile, pred_5k=pred_5k, sent=sent,
+        history=list(archive.values()), **body)
 
     # A suggestion sent to the watch stays today's session: the day's numbers change after a run (readiness drops, the
     # run is the last hard session), and the session that was on the watch shouldn't change with them

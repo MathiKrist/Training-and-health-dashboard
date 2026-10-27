@@ -36,6 +36,15 @@ TITLES = {
     "vo2": "VO2 max intervals", "anaerobic": "Anaerobic repeats", "shakeout": "Shakeout",
 }
 NOUN = {"run": "run", "bike": "ride"}
+# The named sessions of each hard kind, and what they're called
+VARIANTS = {"cruise": "Cruise intervals", "tempo": "Tempo run", "progression": "Threshold progression",
+            "over_under": "Over/unders", "1k": "1 km repeats", "800": "800 m repeats", "3min": "3-minute intervals",
+            "pyramid": "Pyramid", "400": "400 m repeats", "600": "600 m repeats", "400_sets": "400 m sets",
+            "45s": TITLES["anaerobic"]}
+# The named sessions today's suggested run rotates through, per hard kind, and the names it went by before it rotated
+DAILY = {"threshold": ("cruise", "over_under", "tempo", "progression"), "vo2": ("3min", "1k", "800", "pyramid"),
+         "anaerobic": ("45s", "400", "600", "400_sets")}
+OLD_TITLES = {TITLES["threshold"]: "cruise", TITLES["vo2"]: "3min"}
 
 
 def _step(kind, label, s, intensity, target=None, note=None):
@@ -119,6 +128,62 @@ def _run_steps(kind, total, t):
                        _step("recovery", "Walk or jog", 135, "rest"))
     return [_step("warmup", "Warm-up", warm * 60, "easy"), main,
             _step("cooldown", "Cool-down", cool * 60, "easy")]
+
+
+def _dist_s(metres, target, fallback):
+    """Seconds to run `metres` at the middle of a pace target, or `fallback` without one."""
+    if (target or {}).get("type") == "pace":
+        return round(metres / 1000 * (target["slow"] + target["fast"]) / 2)
+    return fallback
+
+
+def _variant_steps(v, total, t):
+    """A named hard session's steps, about `total` minutes with the warm-up and cool-down."""
+    warm = _step("warmup", "Warm-up", 900, "easy")
+    cool = _step("cooldown", "Cool-down", 600, "easy")
+    main = total - 25
+    jog = lambda s: _step("recovery", "Easy jog", s, "rest")
+    if v == "45s":
+        return _run_steps("anaerobic", total, t)
+    if v == "cruise":
+        return _run_steps("threshold", total, t)
+    if v == "3min":
+        return _run_steps("vo2", total, t)
+    if v == "tempo":
+        return [warm, _step("interval", "Tempo", _clamp(main, 20, 30) * 60, "high", t.run("tempo", 3)), cool]
+    if v == "progression":
+        return [_step("interval", "Easy", max(10, total - 25) * 60, "easy", t.run("easy", 2)),
+                _step("interval", "Steady", 600, "high", t.run("tempo", 3)),
+                _step("interval", "Threshold", 600, "high", t.run("threshold", 4)),
+                _step("cooldown", "Cool-down", 300, "easy")]
+    if v == "over_under":
+        n = _clamp(round(main / 6), 3, 4)
+        return [warm, _repeat(n, _step("interval", "Over", 120, "high", t.run("over", 4)),
+                              _step("interval", "Under", 120, "high", t.run("under", 3)), jog(120)), cool]
+    vo2 = t.run("vo2", 5)
+    if v == "1k":
+        return [warm, _repeat(_clamp(round(main / 6.5), 4, 6), _step("interval", "1 km", _dist_s(1000, vo2, 240), "high", vo2),
+                              jog(150)), cool]
+    if v == "800":
+        return [warm, _repeat(_clamp(round(main / 5), 5, 8), _step("interval", "800 m", _dist_s(800, vo2, 190), "high", vo2),
+                              jog(120)), cool]
+    if v == "pyramid":
+        mins = (1, 2, 3, 4, 3, 2, 1)
+        steps = [warm]
+        for j, m in enumerate(mins):
+            steps.append(_step("interval", f"{m} min hard", m * 60, "high", vo2))
+            if j < len(mins) - 1:
+                steps.append(jog(m * 60))
+        return steps + [cool]
+    # Speed: 400 m and longer, so the heart rate gets up and stays there
+    fast = t.pace("anaerobic")
+    note = None if fast else "Fast but controlled, about mile pace"
+    rep = lambda m, fallback: _step("interval", f"{m} m", _dist_s(m, fast, fallback), "anaerobic", fast, note)
+    if v == "400":
+        return [warm, _repeat(_clamp(round(main / 3), 8, 10), rep(400, 85), jog(90)), cool]
+    if v == "600":
+        return [warm, _repeat(_clamp(round(main / 4.5), 5, 7), rep(600, 130), jog(120)), cool]
+    return [warm, _repeat(5, rep(400, 85), jog(60)), jog(180), _repeat(5, rep(400, 85), jog(60)), cool]  # 400 m sets
 
 
 def _bike_steps(kind, total, t):
@@ -220,9 +285,21 @@ def _session(today, readiness, status, focus, focus_title, last_hard, last_thres
     return kind, why, taper
 
 
-def recommend(acts, today, *, readiness, status, focus, focus_title, race, profile, pred_5k, sent,
+def daily_variant(kind, today, history):
+    """Which named session today's hard run is: the one after the last of its kind sent to the watch before today (the
+    suggestion's or the plan's), so the same kind of session doesn't come back the same; by the day without one."""
+    names = DAILY[kind]
+    by_title = {**OLD_TITLES, **{VARIANTS[v]: v for v in names}}
+    last = max((h for h in history if h.get("sport") == "run" and h["date"] < today.isoformat()
+                and by_title.get(h["title"]) in names), key=lambda h: h["date"], default=None)
+    i = names.index(by_title[last["title"]]) + 1 if last else today.toordinal()
+    return names[i % len(names)]
+
+
+def recommend(acts, today, *, readiness, status, focus, focus_title, race, profile, pred_5k, sent, history=(),
               recovery_h=None, sleep_score=None, hrv_status=None):
-    """One workout per sport, main sport first. `acts` are the activity summaries, newest first. Recovery time, sleep
+    """One workout per sport, main sport first. `acts` are the activity summaries, newest first. `history` are the
+    workouts sent to the watch before, for a hard run to follow on from the last of its kind. Recovery time, sleep
     score and HRV status are this morning's, or None."""
     since = (today - timedelta(days=RECENT)).isoformat()
     recent = [a for a in acts if a["date"] >= since]
@@ -253,10 +330,14 @@ def recommend(acts, today, *, readiness, status, focus, focus_title, race, profi
         total = _round5(total * (1 if kind in ("recovery", "shakeout") else volume))
         if volume == SHORT:
             total = min(total, SHORT_MAX_MIN[sport])
-        steps = (_run_steps if sport == "run" else _bike_steps)(kind, total, t)
+        title = f"{TITLES[kind]} {NOUN[sport]}" if kind in ("recovery", "easy", "long", "shakeout") else TITLES[kind]
+        if sport == "run" and kind in DAILY:
+            v = daily_variant(kind, today, history)
+            steps, title = _variant_steps(v, total, t), VARIANTS[v]
+        else:
+            steps = (_run_steps if sport == "run" else _bike_steps)(kind, total, t)
         total_s = sum(s["s"] for s in _flat(steps))
         km = km_of(steps, t) if sport == "run" else None
-        title = f"{TITLES[kind]} {NOUN[sport]}" if kind in ("recovery", "easy", "long", "shakeout") else TITLES[kind]
         out.append({
             "sport": sport, "label": SPORTS[sport], "kind": kind, "title": title, "total_s": total_s, "km": km,
             "why": why, "steps": steps, "paces": sport == "run" and t.lt is not None,
